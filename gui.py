@@ -19,6 +19,7 @@ except ImportError:
 
 from inventory import (
     BASE_DIR,
+    Amount,
     get_all_instances,
     get_all_item_types,
     add_item_type,
@@ -187,16 +188,27 @@ class AddInstanceDialog(_BaseDialog):
         super().__init__(parent, "Add Item to Inventory")
         self.on_submit = on_submit
 
-        self.upc_var  = tk.StringVar()
-        self.qty_var  = tk.StringVar()
-        self.unit_var = tk.StringVar(value=UNIT_OPTIONS[0])
+        self.upc_var = tk.StringVar()
 
-        self._row(0, "UPC",      tk.Entry(self, textvariable=self.upc_var,  width=22))
-        self._row(1, "Quantity", tk.Entry(self, textvariable=self.qty_var,  width=22))
-        self._row(2, "Unit",     ttk.Combobox(self, textvariable=self.unit_var,
-                                              values=UNIT_OPTIONS, state="readonly", width=20))
-        self._buttons(3)
+        # Validation: allow only digits, max 12
+        vcmd = (self.register(self._validate_upc), "%P")
+        upc_entry = tk.Entry(self, textvariable=self.upc_var, width=22,
+                             validate="key", validatecommand=vcmd)
+
+        self._row(0, "UPC", upc_entry)
+        self._buttons(1)
         self._center()
+
+        # Auto-focus and auto-submit on 12 digits
+        upc_entry.focus_set()
+        self.upc_var.trace_add("write", self._on_upc_change)
+
+    def _validate_upc(self, proposed: str) -> bool:
+        return proposed.isdigit() and len(proposed) <= 12 or proposed == ""
+
+    def _on_upc_change(self, *_):
+        if len(self.upc_var.get()) == 12:
+            self._submit()
 
     def _submit(self):
         try:
@@ -204,14 +216,9 @@ class AddInstanceDialog(_BaseDialog):
         except ValueError:
             messagebox.showerror("Invalid UPC", "UPC must be a whole number.", parent=self)
             return
-        try:
-            qty = float(self.qty_var.get().strip())
-        except ValueError:
-            messagebox.showerror("Invalid Quantity", "Quantity must be a number.", parent=self)
-            return
 
         self.destroy()
-        self.on_submit(upc, (qty, self.unit_var.get()))
+        self.on_submit(upc)
 
 
 class AddItemTypeDialog(_BaseDialog):
@@ -224,13 +231,18 @@ class AddItemTypeDialog(_BaseDialog):
         self.upc_var      = tk.StringVar()
         self.name_var     = tk.StringVar()
         self.lifespan_var = tk.StringVar()
+        self.qty_var      = tk.StringVar()
+        self.unit_var     = tk.StringVar(value=UNIT_OPTIONS[0])
         self.image_var    = tk.StringVar()
 
         self._row(0, "UPC",                  tk.Entry(self, textvariable=self.upc_var,      width=28))
         self._row(1, "Name",                 tk.Entry(self, textvariable=self.name_var,     width=28))
         self._row(2, "Lifespan (days)",      tk.Entry(self, textvariable=self.lifespan_var, width=28))
-        self._row(3, "Image path (optional)",tk.Entry(self, textvariable=self.image_var,    width=28))
-        self._buttons(4)
+        self._row(3, "Quantity",             tk.Entry(self, textvariable=self.qty_var,      width=28))
+        self._row(4, "Unit",                 ttk.Combobox(self, textvariable=self.unit_var,
+                                                          values=UNIT_OPTIONS, state="readonly", width=26))
+        self._row(5, "Image path (optional)",tk.Entry(self, textvariable=self.image_var,    width=28))
+        self._buttons(6)
         self._center()
 
     def _submit(self):
@@ -251,9 +263,16 @@ class AddItemTypeDialog(_BaseDialog):
             messagebox.showerror("Invalid Lifespan", "Lifespan must be a whole number.", parent=self)
             return
 
-        image = self.image_var.get().strip()
+        try:
+            qty = float(self.qty_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Invalid Quantity", "Quantity must be a number.", parent=self)
+            return
+
+        amount = Amount(qty, self.unit_var.get())
+        image  = self.image_var.get().strip()
         self.destroy()
-        self.on_submit(upc, name, lifespan, image)
+        self.on_submit(upc, name, lifespan, amount, image)
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +309,8 @@ class InventoryScreen(tk.Frame):
         for w in self._scroll.inner.winfo_children():
             w.destroy()
 
-        instances  = get_all_instances()
-        type_map   = {t.upc: t for t in get_all_item_types()}
+        instances = get_all_instances()
+        type_map  = {t.upc: t for t in get_all_item_types()}
 
         if not instances:
             tk.Label(self._scroll.inner, text="No items logged yet.",
@@ -301,16 +320,19 @@ class InventoryScreen(tk.Frame):
         for inst in instances:
             itype = type_map.get(inst.upc)
             pct   = _health_pct(inst, itype)
-            self._card(inst, pct)
+            self._card(inst, itype, pct)
 
-    def _card(self, inst, pct: float):
+    def _card(self, inst, itype, pct: float):
         card = tk.Frame(self._scroll.inner, bg=CARD, padx=14, pady=10)
         card.pack(fill="x", pady=4)
 
-        _label(card, inst.name,
-               font=FONT_H1).pack(fill="x")
-        _label(card, f"{inst.quantity} {inst.unit}",
-               fg=ACCENT).pack(fill="x")
+        if itype:
+            amount_text = f"{itype.amount.get_quantity()} {itype.amount.get_unit()}"
+        else:
+            amount_text = "Unknown amount"
+
+        _label(card, inst.name,   font=FONT_H1).pack(fill="x")
+        _label(card, amount_text, fg=ACCENT).pack(fill="x")
         _label(card, f"Added: {inst.logged.strftime('%d %b %Y')}",
                fg=SUBTEXT, font=FONT_SMALL).pack(fill="x")
 
@@ -319,9 +341,9 @@ class InventoryScreen(tk.Frame):
     def _open_add(self):
         AddInstanceDialog(self, self._on_add)
 
-    def _on_add(self, upc, amount):
+    def _on_add(self, upc):
         try:
-            add_item_instance(upc, amount)
+            add_item_instance(upc)
             self.refresh()
         except ValueError as e:
             messagebox.showerror("Error", str(e))
@@ -377,10 +399,12 @@ class LookupScreen(tk.Frame):
         text_col = tk.Frame(card, bg=CARD)
         text_col.pack(side="left", fill="both", expand=True)
 
-        _label(text_col, itype.name,       font=FONT_H1).pack(fill="x")
-        _label(text_col, f"UPC: {itype.upc}",             fg=ACCENT).pack(fill="x")
-        _label(text_col, f"Lifespan: {itype.lifespan} days", fg=SUBTEXT,
-               font=FONT_SMALL).pack(fill="x")
+        amount_text = f"{itype.amount.get_quantity()} {itype.amount.get_unit()}"
+
+        _label(text_col, itype.name,                          font=FONT_H1).pack(fill="x")
+        _label(text_col, f"UPC: {itype.upc}",                fg=ACCENT).pack(fill="x")
+        _label(text_col, f"Amount: {amount_text}",            fg=SUBTEXT, font=FONT_SMALL).pack(fill="x")
+        _label(text_col, f"Lifespan: {itype.lifespan} days", fg=SUBTEXT, font=FONT_SMALL).pack(fill="x")
 
         # Image (right side, only if Pillow is installed and path exists)
         if itype.image and PIL_AVAILABLE:
@@ -398,9 +422,9 @@ class LookupScreen(tk.Frame):
     def _open_add(self):
         AddItemTypeDialog(self, self._on_add)
 
-    def _on_add(self, upc, name, lifespan, image):
+    def _on_add(self, upc, name, lifespan, amount, image):
         try:
-            add_item_type(upc, name, lifespan, image)
+            add_item_type(upc, name, lifespan, amount, image)
             self.refresh()
         except ValueError as e:
             messagebox.showerror("Error", str(e))
