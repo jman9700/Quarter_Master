@@ -1,0 +1,25 @@
+# Gradle / build
+.gradle/
+.kotlin/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+local.properties
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Android
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
+*.keystore
+*.jks
+
+# Leftovers from the Python alpha
+__pycache__/
+*.pyc

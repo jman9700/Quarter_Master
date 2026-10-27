@@ -1,0 +1,52 @@
+-- One physical item in the inventory (one carton of milk). Formerly a line in log.txt.
+-- Dates are ISO-8601 calendar dates ("2026-10-27"); timestamps are epoch milliseconds.
+CREATE TABLE item (
+    id             TEXT    NOT NULL PRIMARY KEY,
+    type_id        TEXT    NOT NULL REFERENCES product_type(id),
+    added_on       TEXT    NOT NULL,
+    best_by        TEXT,             -- printed best-by date, when known; overrides the type's lifespan
+    removed_on     TEXT,             -- set when the item leaves the inventory
+    removal_reason TEXT,             -- USED | SPOILED | DISCARDED
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    deleted_at     INTEGER           -- tombstone: logged by mistake
+);
+
+CREATE INDEX item_type ON item(type_id);
+
+selectNotDeleted:
+SELECT * FROM item WHERE deleted_at IS NULL;
+
+selectByType:
+SELECT * FROM item WHERE type_id = ? AND deleted_at IS NULL;
+
+selectById:
+SELECT * FROM item WHERE id = ?;
+
+selectAll:
+SELECT * FROM item;
+
+insert:
+INSERT INTO item(id, type_id, added_on, best_by, removed_on, removal_reason, created_at, updated_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateDates:
+UPDATE item SET added_on = ?, best_by = ?, updated_at = ? WHERE id = ?;
+
+markRemoved:
+UPDATE item SET removed_on = ?, removal_reason = ?, updated_at = ? WHERE id = ?;
+
+restore:
+UPDATE item SET removed_on = NULL, removal_reason = NULL, updated_at = :now WHERE id = :id;
+
+softDelete:
+UPDATE item SET deleted_at = :now, updated_at = :now WHERE id = :id;
+
+softDeleteByType:
+UPDATE item SET deleted_at = :now, updated_at = :now WHERE type_id = :typeId AND deleted_at IS NULL;
+
+replace:
+UPDATE item
+SET type_id = ?, added_on = ?, best_by = ?, removed_on = ?, removal_reason = ?,
+    created_at = ?, updated_at = ?, deleted_at = ?
+WHERE id = ?;

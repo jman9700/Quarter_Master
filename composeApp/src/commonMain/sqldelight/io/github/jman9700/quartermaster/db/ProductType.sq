@@ -1,0 +1,51 @@
+-- A kind of product ("Great Value Whole Milk, 1 gal"). Formerly a line in lookup.txt.
+--
+-- Sync-ready conventions used by every table:
+--   * ids are random UUIDs, so rows created on different devices never collide
+--   * created_at / updated_at are epoch milliseconds; updated_at drives last-write-wins merges
+--   * rows are never hard-deleted; deleted_at is a tombstone that a future server can sync
+CREATE TABLE product_type (
+    id            TEXT    NOT NULL PRIMARY KEY,
+    gtin          TEXT,              -- normalized GTIN-14, NULL for products without a barcode (e.g. fruit)
+    name          TEXT    NOT NULL,
+    lifespan_days INTEGER NOT NULL,  -- default shelf life after it is added
+    quantity      REAL    NOT NULL,
+    unit          TEXT    NOT NULL,
+    image_file    TEXT,              -- file name inside the app's image store
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    deleted_at    INTEGER
+);
+
+CREATE UNIQUE INDEX product_type_active_gtin ON product_type(gtin) WHERE gtin IS NOT NULL AND deleted_at IS NULL;
+
+selectActive:
+SELECT * FROM product_type WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE;
+
+selectById:
+SELECT * FROM product_type WHERE id = ?;
+
+selectActiveByGtin:
+SELECT * FROM product_type WHERE gtin = ? AND deleted_at IS NULL;
+
+selectAll:
+SELECT * FROM product_type;
+
+insert:
+INSERT INTO product_type(id, gtin, name, lifespan_days, quantity, unit, image_file, created_at, updated_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+update:
+UPDATE product_type
+SET gtin = ?, name = ?, lifespan_days = ?, quantity = ?, unit = ?, image_file = ?, updated_at = ?
+WHERE id = ?;
+
+-- Used by backup import to apply a newer remote copy of a row, tombstone included.
+replace:
+UPDATE product_type
+SET gtin = ?, name = ?, lifespan_days = ?, quantity = ?, unit = ?, image_file = ?,
+    created_at = ?, updated_at = ?, deleted_at = ?
+WHERE id = ?;
+
+softDelete:
+UPDATE product_type SET deleted_at = :now, updated_at = :now WHERE id = :id;
