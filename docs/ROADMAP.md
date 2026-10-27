@@ -4,9 +4,9 @@
 
 Fully on-device, with manual entry plus camera barcode scanning. See the README for features.
 
-## 2. Windows, then Linux
+## 2. Windows, then Linux (Windows done)
 
-The shared code (`commonMain`) already contains every screen, the database layer and the business rules. A desktop port needs:
+A `jvm("desktop")` Compose Desktop target in the same project. It's built and tested on Windows. Linux uses the same code but hasn't been tried on a Linux machine yet. Webcam scanning is still open. The original plan:
 
 1. Add a `jvm("desktop")` target in `composeApp/build.gradle.kts` and a `desktopMain` source set.
 2. Implement `PlatformServices` for desktop:

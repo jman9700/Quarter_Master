@@ -1,4 +1,7 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+val appVersion = "1.0.0"
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -16,8 +19,12 @@ kotlin {
         }
     }
 
-    // A jvm("desktop") target is added here for the Windows / Linux ports.
-    // Everything in commonMain must stay free of Android APIs so it compiles there.
+    // Windows / Linux. Everything in commonMain must stay free of Android APIs so it compiles here.
+    jvm("desktop") {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
 
     sourceSets {
         all {
@@ -66,6 +73,20 @@ kotlin {
                 implementation(libs.sqldelight.sqlite.driver)
             }
         }
+
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                implementation(libs.kotlinx.coroutines.swing)
+                implementation(libs.sqldelight.sqlite.driver)
+                implementation(libs.ktor.client.okhttp)
+            }
+        }
+
+        val desktopTest by getting {
+            // The database and backup tests are plain JVM code, so run them on desktop too.
+            kotlin.srcDir("src/androidUnitTest/kotlin")
+        }
     }
 }
 
@@ -78,7 +99,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = appVersion
     }
 
     buildFeatures {
@@ -114,6 +135,37 @@ sqldelight {
         create("QuarterMasterDatabase") {
             packageName.set("io.github.jman9700.quartermaster.db")
             schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
+        }
+    }
+}
+
+compose.desktop {
+    application {
+        mainClass = "io.github.jman9700.quartermaster.desktop.MainKt"
+        jvmArgs += "-Dquartermaster.version=$appVersion"
+
+        nativeDistributions {
+            targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.AppImage)
+            packageName = "Quarter Master"
+            packageVersion = appVersion
+            description = "Pantry and household inventory"
+            vendor = "jman9700"
+            // From ./gradlew suggestRuntimeModules (java.sql is the SQLite JDBC driver).
+            modules("java.instrument", "java.management", "java.sql", "jdk.unsupported")
+
+            windows {
+                menuGroup = "Quarter Master"
+                shortcut = true
+                dirChooser = true
+                perUserInstall = true
+                // Fixed so MSI upgrades replace the installed version instead of installing side by side.
+                upgradeUuid = "6f4c2a9e-3b7d-4e1a-9c58-2d0f8b7a1e64"
+            }
+            linux {
+                packageName = "quartermaster"
+                menuGroup = "Office"
+                shortcut = true
+            }
         }
     }
 }

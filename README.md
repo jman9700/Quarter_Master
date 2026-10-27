@@ -2,11 +2,11 @@
 
 A pantry and household inventory app. Scan a product's barcode with your phone's camera, and Quarter Master tracks what you have and how fresh it is.
 
-Version 1.0 is an Android app that works entirely on the device. There's no server and no account.
+Version 1.0 is an Android app that works entirely on the device, plus a desktop version for Windows and Linux. There's no server and no account.
 
 ## Features
 
-- **Barcode scanning** with the camera (on-device ML Kit, works offline). Accepts UPC-A, UPC-E, EAN-13 and EAN-8, normalized so the same product always matches. You can also type a code by hand.
+- **Barcode scanning** with the camera (on-device ML Kit, works offline). Accepts UPC-A, UPC-E, EAN-13 and EAN-8, normalized so the same product always matches. You can also type a code by hand. On desktop, a USB barcode scanner works too: it types into the barcode box like a keyboard.
 - **Products** (the alpha's "UPC Lookup"): name, barcode (optional, for things like fruit), default lifespan, amount and unit, and a photo.
 - **Inventory**: every item you own, soonest to expire first, with the alpha's color-coded freshness bar.
 - **Best-by dates**: when an item has a best-by date, it overrides the product's default lifespan.
@@ -17,7 +17,9 @@ Version 1.0 is an Android app that works entirely on the device. There's no serv
 
 ## Building
 
-You need the Android SDK and a JDK 17+ (Android Studio's bundled JBR works).
+You need the Android SDK and a JDK 17+ (Android Studio's bundled JBR works). The Android SDK is needed even for desktop builds, because both live in one Gradle project.
+
+### Android
 
 ```bash
 ./gradlew :composeApp:assembleDebug
@@ -31,21 +33,47 @@ The APK ends up in `composeApp/build/outputs/apk/debug/`. Install it with `adb i
 
 This runs the unit tests: barcode normalization, freshness and lifespan statistics, the database repository, backup merge rules, and the OpenFoodFacts client against a mock server.
 
+### Windows and Linux
+
+Run the desktop app straight from Gradle:
+
+```bash
+./gradlew :composeApp:run
+```
+
+Run the tests on the desktop JVM. These are the same tests plus desktop image storage:
+
+```bash
+./gradlew :composeApp:desktopTest
+```
+
+To build an installer, Gradle has to run on a full JDK 17+ that includes `jpackage`, such as Temurin or Oracle. Android Studio's JBR doesn't include it. Point `JAVA_HOME` at that JDK, then:
+
+```bash
+./gradlew :composeApp:packageMsi
+```
+
+This builds the Windows installer. On Linux, run `./gradlew :composeApp:packageDeb` or `./gradlew :composeApp:packageAppImage` instead. jpackage only builds installers for the OS it runs on, and the MSI build downloads the WiX toolset the first time. Output goes to `composeApp/build/compose/binaries/main/`.
+
+The desktop app stores its database and photos in `%APPDATA%\QuarterMaster` on Windows and in `~/.local/share/quartermaster` on Linux (or `$XDG_DATA_HOME/quartermaster` if that's set). To try things without touching that data, set `JAVA_TOOL_OPTIONS=-Dquartermaster.dataDir=<folder>` before starting it. To move data between your phone and computer, export a backup on one and import it on the other.
+
 ## Project layout
 
 Kotlin Multiplatform plus Compose Multiplatform, so the Windows and Linux ports reuse the same code.
 
 ```
 composeApp/src/
-  commonMain/            Shared by every platform (Android now, desktop next)
+  commonMain/            Shared by every platform (Android and desktop)
     kotlin/.../domain/   Barcode rules, freshness math, lifespan statistics, models
     kotlin/.../data/     SQLDelight repository, backup import/export, OpenFoodFacts client
     kotlin/.../platform/ PlatformServices: what each platform must provide (scanner, files, photos)
     kotlin/.../ui/       All screens (Compose)
     sqldelight/          Database schema and queries
   androidMain/           CameraX + ML Kit scanner, image storage, file pickers, app entry point
+  desktopMain/           Windows / Linux: app-data folder, javax.imageio thumbnails, native file dialogs, main()
   commonTest/            Platform-independent tests
-  androidUnitTest/       Database tests against in-memory SQLite
+  androidUnitTest/       Database tests against in-memory SQLite (also run by desktopTest)
+  desktopTest/           Desktop image store and app-data folder tests
 ```
 
 ### Data model
