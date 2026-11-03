@@ -1,7 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val appVersion = "1.0.0"
+val appVersion = "1.1.0"
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -98,7 +98,7 @@ android {
         applicationId = "io.github.jman9700.quartermaster"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
+        versionCode = 2
         versionName = appVersion
     }
 
