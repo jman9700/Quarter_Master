@@ -1,0 +1,185 @@
+-- The server's own database. Times are epoch milliseconds.
+
+-- Devices that asked to be whitelisted. Secrets are stored only as SHA-256 hashes.
+CREATE TABLE device (
+    id           TEXT    NOT NULL PRIMARY KEY,
+    secret_hash  TEXT    NOT NULL,
+    person_name  TEXT    NOT NULL,   -- what the activity log shows; the host can correct it
+    device_name  TEXT    NOT NULL,
+    status       TEXT    NOT NULL,   -- PENDING | APPROVED | DENIED | REVOKED
+    requested_at INTEGER NOT NULL,
+    decided_at   INTEGER,
+    last_seen_at INTEGER
+);
+
+CREATE TABLE inventory (
+    id             TEXT    NOT NULL PRIMARY KEY,
+    name           TEXT    NOT NULL,
+    password_hash  TEXT    NOT NULL,   -- PBKDF2, see Security.kt
+    owner_key_hash TEXT    NOT NULL,
+    created_by     TEXT    NOT NULL REFERENCES device(id),
+    created_at     INTEGER NOT NULL,
+    deleted_at     INTEGER
+);
+
+-- 24-hour passes. Only the token's hash is kept.
+CREATE TABLE pass (
+    token_hash   TEXT    NOT NULL PRIMARY KEY,
+    inventory_id TEXT    NOT NULL,
+    device_id    TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL
+);
+
+-- Synced rows, stored as the protocol's JSON. seq orders changes for the clients' cursors.
+CREATE TABLE product (
+    inventory_id TEXT    NOT NULL,
+    id           TEXT    NOT NULL,
+    body         TEXT    NOT NULL,   -- the protocol row as JSON
+    updated_at   INTEGER NOT NULL,
+    changed_by   TEXT    NOT NULL,
+    seq          INTEGER NOT NULL,
+    PRIMARY KEY (inventory_id, id)
+);
+CREATE INDEX product_seq ON product(inventory_id, seq);
+
+CREATE TABLE item (
+    inventory_id TEXT    NOT NULL,
+    id           TEXT    NOT NULL,
+    body         TEXT    NOT NULL,   -- the protocol row as JSON
+    updated_at   INTEGER NOT NULL,
+    changed_by   TEXT    NOT NULL,
+    seq          INTEGER NOT NULL,
+    PRIMARY KEY (inventory_id, id)
+);
+CREATE INDEX item_seq ON item(inventory_id, seq);
+
+-- Who did what, for the host.
+CREATE TABLE activity (
+    id           INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    at           INTEGER NOT NULL,
+    device_id    TEXT,
+    person_name  TEXT,
+    inventory_id TEXT,
+    action       TEXT    NOT NULL
+);
+
+CREATE TABLE counter (
+    name  TEXT    NOT NULL PRIMARY KEY,
+    value INTEGER NOT NULL
+);
+
+-- ---- Devices --------------------------------------------------------------------------------
+
+insertDevice:
+INSERT INTO device(id, secret_hash, person_name, device_name, status, requested_at, decided_at, last_seen_at)
+VALUES (?, ?, ?, ?, 'PENDING', ?, NULL, NULL);
+
+deviceById:
+SELECT * FROM device WHERE id = ?;
+
+allDevices:
+SELECT * FROM device ORDER BY status = 'PENDING' DESC, requested_at DESC;
+
+renewRequest:
+UPDATE device SET secret_hash = ?, person_name = ?, device_name = ?, status = 'PENDING', requested_at = ?, decided_at = NULL WHERE id = ?;
+
+decideDevice:
+UPDATE device SET status = ?, decided_at = ? WHERE id = ?;
+
+renameDevice:
+UPDATE device SET person_name = ? WHERE id = ?;
+
+touchDevice:
+UPDATE device SET last_seen_at = ? WHERE id = ?;
+
+-- ---- Inventories ----------------------------------------------------------------------------
+
+insertInventory:
+INSERT INTO inventory(id, name, password_hash, owner_key_hash, created_by, created_at, deleted_at)
+VALUES (?, ?, ?, ?, ?, ?, NULL);
+
+inventoryById:
+SELECT * FROM inventory WHERE id = ? AND deleted_at IS NULL;
+
+activeInventories:
+SELECT inventory.id, inventory.name, inventory.created_at, device.person_name AS created_by_name
+FROM inventory JOIN device ON device.id = inventory.created_by
+WHERE inventory.deleted_at IS NULL
+ORDER BY inventory.name COLLATE NOCASE;
+
+setPassword:
+UPDATE inventory SET password_hash = ? WHERE id = ?;
+
+setOwnerKey:
+UPDATE inventory SET owner_key_hash = ? WHERE id = ?;
+
+deleteInventory:
+UPDATE inventory SET deleted_at = ? WHERE id = ?;
+
+-- ---- Passes ---------------------------------------------------------------------------------
+
+insertPass:
+INSERT INTO pass(token_hash, inventory_id, device_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?);
+
+passByToken:
+SELECT * FROM pass WHERE token_hash = ?;
+
+revokePassesForInventory:
+DELETE FROM pass WHERE inventory_id = ?;
+
+revokePassesForDevice:
+DELETE FROM pass WHERE device_id = ?;
+
+deleteExpiredPasses:
+DELETE FROM pass WHERE expires_at <= ?;
+
+activePasses:
+SELECT pass.*, device.person_name, device.device_name, inventory.name AS inventory_name
+FROM pass JOIN device ON device.id = pass.device_id JOIN inventory ON inventory.id = pass.inventory_id
+WHERE pass.expires_at > ?
+ORDER BY pass.expires_at DESC;
+
+-- ---- Sync -----------------------------------------------------------------------------------
+
+productById:
+SELECT * FROM product WHERE inventory_id = ? AND id = ?;
+
+upsertProduct:
+INSERT OR REPLACE INTO product(inventory_id, id, body, updated_at, changed_by, seq) VALUES (?, ?, ?, ?, ?, ?);
+
+productsSince:
+SELECT body FROM product WHERE inventory_id = ? AND seq > ? ORDER BY seq;
+
+productCount:
+SELECT count(*) FROM product WHERE inventory_id = ?;
+
+itemById:
+SELECT * FROM item WHERE inventory_id = ? AND id = ?;
+
+upsertItem:
+INSERT OR REPLACE INTO item(inventory_id, id, body, updated_at, changed_by, seq) VALUES (?, ?, ?, ?, ?, ?);
+
+itemsSince:
+SELECT body FROM item WHERE inventory_id = ? AND seq > ? ORDER BY seq;
+
+itemCount:
+SELECT count(*) FROM item WHERE inventory_id = ?;
+
+-- ---- Activity -------------------------------------------------------------------------------
+
+logActivity:
+INSERT INTO activity(at, device_id, person_name, inventory_id, action) VALUES (?, ?, ?, ?, ?);
+
+recentActivity:
+SELECT activity.*, inventory.name AS inventory_name
+FROM activity LEFT JOIN inventory ON inventory.id = activity.inventory_id
+ORDER BY activity.id DESC LIMIT ?;
+
+-- ---- Counters -------------------------------------------------------------------------------
+
+counterValue:
+SELECT value FROM counter WHERE name = ?;
+
+setCounter:
+INSERT OR REPLACE INTO counter(name, value) VALUES (?, ?);

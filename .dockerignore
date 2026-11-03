@@ -1,0 +1,10 @@
+# The server image only needs Server/, Shared/ and the Gradle files.
+.git
+.gradle
+.kotlin
+**/build
+Client
+docs
+__pycache__
+local.properties
+*.apk

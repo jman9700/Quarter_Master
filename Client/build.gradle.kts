@@ -33,6 +33,11 @@ kotlin {
             languageSettings.optIn("androidx.compose.material3.ExperimentalMaterial3Api")
         }
 
+        commonMain {
+            // The sync protocol, shared with the server.
+            kotlin.srcDir("../Shared/src/commonMain/kotlin")
+        }
+
         commonMain.dependencies {
             implementation(compose.runtime)
             implementation(compose.foundation)

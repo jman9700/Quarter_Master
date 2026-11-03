@@ -1,0 +1,25 @@
+# Run a Quarter Master server:  docker compose -f Server/docker-compose.yml up -d --build
+# Settings come from the environment or a .env file next to this one (see Server/README.md).
+services:
+  quartermaster:
+    build:
+      context: ..
+      dockerfile: Server/Dockerfile
+      args:
+        QM_COMMIT: ${QM_COMMIT:-dev}
+    image: quartermaster-server:latest
+    container_name: ${QM_CONTAINER_NAME:-quartermaster}
+    restart: unless-stopped
+    ports:
+      - "${QM_PORT:-47821}:47821/tcp"
+      - "${QM_PORT:-47821}:47821/udp"
+    environment:
+      QM_SERVER_NAME: ${QM_SERVER_NAME:-Quarter Master server}
+      # Leave empty to have one generated into the data volume on first start (see the logs).
+      QM_ADMIN_TOKEN: ${QM_ADMIN_TOKEN:-}
+      QM_DISCOVERY: ${QM_DISCOVERY:-on}
+    volumes:
+      - quartermaster-data:/data
+
+volumes:
+  quartermaster-data:
