@@ -120,7 +120,7 @@ private fun InventoryCard(item: InventoryItem, today: LocalDate, imageStore: Ima
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ProductImage(imageStore, item.type.imageFile, 48.dp)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(item.type.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(item.type.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(item.type.amountText, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
                     Text(
                         "Added ${item.addedOn.pretty()}" + (item.bestBy?.let { " · Best by ${it.pretty()}" } ?: ""),
@@ -180,7 +180,7 @@ fun ProductCard(type: ProductType, inStock: Int?, imageStore: ImageStore, onClic
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(type.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(type.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
                     type.gtin?.let { "UPC: ${Barcode.display(it)}" } ?: "No barcode",
                     color = MaterialTheme.colorScheme.primary,
@@ -190,6 +190,9 @@ fun ProductCard(type: ProductType, inStock: Int?, imageStore: ImageStore, onClic
                 Text("Lifespan: ${type.lifespanDays} days", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (inStock != null && inStock > 0) {
                     Text("$inStock in inventory", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (type.isLookupPending) {
+                    Text("Product info pending: waiting for internet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                 }
             }
             ProductImage(imageStore, type.imageFile, 72.dp, Modifier.padding(start = 8.dp))
@@ -220,7 +223,7 @@ fun HistoryScreen(
                 ) {
                     ProductImage(imageStore, item.type.imageFile, 40.dp)
                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text(item.type.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(item.type.displayName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             "${item.removalReason?.label ?: "Removed"} ${item.removedOn?.pretty()}",
                             style = MaterialTheme.typography.bodySmall,

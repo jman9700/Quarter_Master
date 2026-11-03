@@ -8,7 +8,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import io.github.jman9700.quartermaster.domain.Nutrients
+import io.github.jman9700.quartermaster.domain.Nutrition
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -25,6 +29,8 @@ class OpenFoodFactsTest {
             ),
         )
 
+    private fun found(result: LookupResult) = assertIs<LookupResult.Found>(result).suggestion
+
     @Test
     fun parsesAProduct() = runTest {
         var url = ""
@@ -36,27 +42,90 @@ class OpenFoodFactsTest {
             """.trimIndent(),
             onUrl = { url = it },
         )
-        val s = off.lookup("00036000291452")!!
+        val s = found(off.lookup("00036000291452"))
         assertTrue(url.contains("/product/0036000291452.json"), url)
+        assertTrue(url.contains("nutriments"), url)
         assertEquals("Great Value Whole Milk", s.name)
         assertEquals(1.0, s.quantity)
         assertEquals("Gal", s.unit)
         assertEquals("https://images.example/milk.jpg", s.imageUrl)
+        assertNull(s.nutrition)
     }
 
     @Test
-    fun unknownProductIsNull() = runTest {
-        assertNull(client(body = """{"status":0,"status_verbose":"product not found"}""").lookup("00036000291452"))
+    fun parsesNutrition() = runTest {
+        val off = client(
+            body = """
+                {"status":1,"product":{"product_name":"Peanut Butter",
+                  "nutriscore_grade":"D","nova_group":"3","serving_size":"2 tbsp (32 g)",
+                  "allergens_tags":["en:peanuts","en:soybeans"],
+                  "ingredients_text":"Arachides","ingredients_text_en":"Roasted peanuts, sugar, salt",
+                  "nutriments":{"energy-kcal_100g":588,"energy-kcal_serving":"190","fat_100g":50,"saturated-fat_100g":10,
+                    "carbohydrates_100g":20,"sugars_100g":9,"fiber_100g":6,"proteins_100g":25,"salt_100g":1.25,
+                    "sodium_serving":0.14}}}
+            """.trimIndent(),
+        )
+        val n = assertNotNull(found(off.lookup("00036000291452")).nutrition)
+        assertEquals("d", n.nutriScore)
+        assertEquals(3, n.novaGroup)
+        assertEquals("2 tbsp (32 g)", n.servingSize)
+        assertEquals(listOf("Peanuts", "Soybeans"), n.allergens)
+        assertEquals("Roasted peanuts, sugar, salt", n.ingredients)
+        val per100 = assertNotNull(n.per100g)
+        assertEquals(588.0, per100.energyKcal)
+        assertEquals(25.0, per100.proteins)
+        assertEquals(0.5, per100.sodium) // derived from salt / 2.5
+        val serving = assertNotNull(n.perServing)
+        assertEquals(190.0, serving.energyKcal) // numbers may arrive as strings
+        assertEquals(0.14, serving.sodium)
+        assertNull(serving.fat)
     }
 
     @Test
-    fun httpErrorIsNull() = runTest {
-        assertNull(client(HttpStatusCode.InternalServerError, "oops").lookup("00036000291452"))
+    fun unknownGradesAreDropped() {
+        val n = OffProduct(
+            nutriscoreGrade = "unknown",
+            novaGroup = kotlinx.serialization.json.JsonPrimitive(9),
+            servingSize = "1 cup",
+            allergensTags = listOf("en:milk"),
+        ).toNutrition()
+        assertEquals(Nutrition(servingSize = "1 cup", allergens = listOf("Milk")), n)
+        assertNull(OffProduct(nutriscoreGrade = "not-applicable").toNutrition())
+        // A serving size alone isn't nutrition info worth showing.
+        assertNull(OffProduct(servingSize = "1 cup").toNutrition())
     }
 
     @Test
-    fun garbageIsNull() = runTest {
-        assertNull(client(body = "<html>not json</html>").lookup("00036000291452"))
+    fun nutritionSurvivesStorage() {
+        val n = Nutrition(nutriScore = "a", per100g = Nutrients(energyKcal = 52.0), allergens = listOf("Milk"))
+        assertEquals(n, Nutrition.fromJson(n.toJson()))
+        assertNull(Nutrition.fromJson("not json"))
+        assertNull(Nutrition.fromJson(null))
+    }
+
+    @Test
+    fun unknownProductIsNotFound() = runTest {
+        assertEquals(LookupResult.NotFound, client(body = """{"status":0,"status_verbose":"product not found"}""").lookup("00036000291452"))
+        assertEquals(LookupResult.NotFound, client(HttpStatusCode.NotFound, """{"status":0}""").lookup("00036000291452"))
+    }
+
+    @Test
+    fun serverErrorIsUnavailable() = runTest {
+        assertEquals(LookupResult.Unavailable, client(HttpStatusCode.InternalServerError, "oops").lookup("00036000291452"))
+        assertEquals(LookupResult.Unavailable, client(HttpStatusCode.ServiceUnavailable, "busy").lookup("00036000291452"))
+    }
+
+    @Test
+    fun captivePortalOrGarbageIsUnavailable() = runTest {
+        assertEquals(LookupResult.Unavailable, client(body = "<html>Sign in to Wi-Fi</html>").lookup("00036000291452"))
+    }
+
+    @Test
+    fun networkFailureIsUnavailable() = runTest {
+        val off = OpenFoodFactsClient(
+            OpenFoodFactsClient.createHttpClient(HttpClient(MockEngine { throw IllegalStateException("no route to host") }), "test"),
+        )
+        assertEquals(LookupResult.Unavailable, off.lookup("00036000291452"))
     }
 
     @Test
@@ -83,5 +152,7 @@ class OpenFoodFactsTest {
     fun brandIsNotDuplicatedInTheName() {
         assertEquals("Cheerios", OffProduct(productName = "Cheerios", brands = "Cheerios").toSuggestion().name)
         assertEquals("Heinz", OffProduct(brands = "Heinz").toSuggestion().name)
+        assertEquals("Coca-Cola Original", OffProduct(productName = "Coca-Cola Original", brands = "COCA-COLA SERVICES SA/NV").toSuggestion().name)
+        assertEquals("Great Value Whole Milk", OffProduct(productName = "Whole Milk", brands = "Great Value").toSuggestion().name)
     }
 }

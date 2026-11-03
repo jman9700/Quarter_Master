@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Only for the optional OpenFoodFacts lookup; the app works fully offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- To tell "no signal" apart before trying the food database, and queue the lookup instead. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 

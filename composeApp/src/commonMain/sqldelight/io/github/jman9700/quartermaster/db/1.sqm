@@ -1,0 +1,9 @@
+-- Version 1 -> 2: nutrition info and the offline lookup queue.
+ALTER TABLE product_type ADD COLUMN user_fields TEXT NOT NULL DEFAULT '';
+ALTER TABLE product_type ADD COLUMN lookup_status TEXT NOT NULL DEFAULT 'NONE';
+ALTER TABLE product_type ADD COLUMN lookup_requested_at INTEGER;
+ALTER TABLE product_type ADD COLUMN nutrition TEXT;
+
+-- Everything saved by 1.0 was checked by the user, so a later lookup may only add what's missing:
+-- nutrition, and a photo when there isn't one.
+UPDATE product_type SET user_fields = CASE WHEN image_file IS NULL THEN 'name,amount' ELSE 'name,amount,image' END;

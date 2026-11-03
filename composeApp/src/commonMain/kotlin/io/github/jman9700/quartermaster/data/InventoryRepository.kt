@@ -9,7 +9,11 @@ import io.github.jman9700.quartermaster.db.Product_type
 import io.github.jman9700.quartermaster.db.QuarterMasterDatabase
 import io.github.jman9700.quartermaster.domain.DuplicateBarcodeException
 import io.github.jman9700.quartermaster.domain.InventoryItem
+import io.github.jman9700.quartermaster.domain.LookupResultState
+import io.github.jman9700.quartermaster.domain.LookupStatus
+import io.github.jman9700.quartermaster.domain.Nutrition
 import io.github.jman9700.quartermaster.domain.ProductDraft
+import io.github.jman9700.quartermaster.domain.ProductField
 import io.github.jman9700.quartermaster.domain.ProductType
 import io.github.jman9700.quartermaster.domain.RemovalReason
 import kotlinx.coroutines.CoroutineDispatcher
@@ -71,12 +75,21 @@ class InventoryRepository(
         types.selectActiveByGtin(gtin14).executeAsOneOrNull()?.toDomain()
     }
 
+    suspend fun getType(id: String): ProductType? = io {
+        types.selectById(id).executeAsOneOrNull()?.takeIf { it.deleted_at == null }?.toDomain()
+    }
+
     suspend fun createType(draft: ProductDraft): ProductType = io {
         db.transactionWithResult {
             draft.gtin?.let { gtin -> types.selectActiveByGtin(gtin).executeAsOneOrNull()?.let { throw DuplicateBarcodeException(it.toDomain()) } }
             val now = env.nowMillis()
             val id = env.newId()
-            types.insert(id, draft.gtin, draft.name, draft.lifespanDays.toLong(), draft.quantity, draft.unit, draft.imageFile, now, now, null)
+            val lookup = draft.lookup?.takeIf { draft.gtin != null } ?: LookupResultState(LookupStatus.NONE)
+            types.insert(
+                id, draft.gtin, draft.name, draft.lifespanDays.toLong(), draft.quantity, draft.unit, draft.imageFile, now, now, null,
+                ProductField.format(draft.userFields), lookup.status.name, now.takeIf { lookup.status == LookupStatus.PENDING },
+                lookup.nutrition?.toJson(),
+            )
             types.selectById(id).executeAsOne().toDomain()
         }
     }
@@ -87,7 +100,71 @@ class InventoryRepository(
                 val other = types.selectActiveByGtin(gtin).executeAsOneOrNull()
                 if (other != null && other.id != id) throw DuplicateBarcodeException(other.toDomain())
             }
-            types.update(draft.gtin, draft.name, draft.lifespanDays.toLong(), draft.quantity, draft.unit, draft.imageFile, env.nowMillis(), id)
+            val current = types.selectById(id).executeAsOne()
+            val now = env.nowMillis()
+            types.update(
+                draft.gtin, draft.name, draft.lifespanDays.toLong(), draft.quantity, draft.unit, draft.imageFile,
+                ProductField.format(draft.userFields), now, id,
+            )
+            val lookup = when {
+                draft.gtin == null -> LookupResultState(LookupStatus.NONE)
+                draft.lookup != null -> draft.lookup
+                // A different barcode is a different product: its old nutrition no longer applies.
+                draft.gtin != current.gtin -> LookupResultState(LookupStatus.PENDING)
+                else -> null
+            }
+            if (lookup != null) {
+                types.setLookupState(lookup.status.name, now.takeIf { lookup.status == LookupStatus.PENDING }, lookup.nutrition?.toJson(), id)
+            }
+        }
+    }
+
+    suspend fun setLifespan(id: String, days: Int) = io { types.setLifespan(days.toLong(), env.nowMillis(), id) }
+
+    // ---- Lookup queue ------------------------------------------------------------------------
+    // The queue is simply every product whose lookup_status is PENDING, oldest request first.
+    // Keeping it in the product row means it survives restarts and travels with backups.
+
+    /** Queues products with a barcode that were never looked up. */
+    suspend fun queueNeverLookedUp() = io { types.queueNeverLookedUp(env.nowMillis()) }
+
+    suspend fun pendingLookups(): List<ProductType> = io { types.selectPendingLookups().executeAsList().map { it.toDomain() } }
+
+    suspend fun requestLookup(id: String) = io {
+        db.transaction {
+            val current = types.selectById(id).executeAsOneOrNull() ?: return@transaction
+            if (current.gtin == null) return@transaction
+            types.setLookupState(LookupStatus.PENDING.name, env.nowMillis(), current.nutrition, id)
+        }
+    }
+
+    /**
+     * Fills in a product from a lookup result. Fields the user set are left alone; [imageFile] is a
+     * photo already downloaded for it, if any.
+     */
+    suspend fun applyLookup(id: String, suggestion: ProductSuggestion, imageFile: String?) = io {
+        db.transaction {
+            val row = types.selectById(id).executeAsOneOrNull()?.takeIf { it.deleted_at == null } ?: return@transaction
+            val owned = ProductField.parse(row.user_fields)
+            val name = suggestion.name.takeUnless { ProductField.NAME in owned } ?: row.name
+            val takeAmount = ProductField.AMOUNT !in owned && suggestion.quantity != null && suggestion.unit != null
+            val image = imageFile.takeUnless { ProductField.IMAGE in owned } ?: row.image_file
+            types.applyLookup(
+                name,
+                if (takeAmount) suggestion.quantity!! else row.quantity,
+                if (takeAmount) suggestion.unit!! else row.unit,
+                image,
+                suggestion.nutrition?.toJson() ?: row.nutrition,
+                env.nowMillis(),
+                id,
+            )
+        }
+    }
+
+    suspend fun markLookupNotFound(id: String) = io {
+        db.transaction {
+            val row = types.selectById(id).executeAsOneOrNull() ?: return@transaction
+            types.setLookupState(LookupStatus.NOT_FOUND.name, null, row.nutrition, id)
         }
     }
 
@@ -158,6 +235,9 @@ internal fun Product_type.toDomain() = ProductType(
     imageFile = image_file,
     createdAt = created_at,
     updatedAt = updated_at,
+    userFields = ProductField.parse(user_fields),
+    lookupStatus = runCatching { LookupStatus.valueOf(lookup_status) }.getOrDefault(LookupStatus.NONE),
+    nutrition = Nutrition.fromJson(nutrition),
 )
 
 internal fun Item.toDomain(type: ProductType) = InventoryItem(

@@ -14,7 +14,14 @@ CREATE TABLE product_type (
     image_file    TEXT,              -- file name inside the app's image store
     created_at    INTEGER NOT NULL,
     updated_at    INTEGER NOT NULL,
-    deleted_at    INTEGER
+    deleted_at    INTEGER,
+    -- Fields the user typed or chose themselves (comma list of name, amount, image).
+    -- An online lookup never overwrites these.
+    user_fields         TEXT    NOT NULL DEFAULT '',
+    -- NONE (never looked up) | PENDING (queued until online) | FOUND | NOT_FOUND
+    lookup_status       TEXT    NOT NULL DEFAULT 'NONE',
+    lookup_requested_at INTEGER,
+    nutrition           TEXT              -- JSON, see domain/Nutrition.kt
 );
 
 CREATE UNIQUE INDEX product_type_active_gtin ON product_type(gtin) WHERE gtin IS NOT NULL AND deleted_at IS NULL;
@@ -32,19 +39,41 @@ selectAll:
 SELECT * FROM product_type;
 
 insert:
-INSERT INTO product_type(id, gtin, name, lifespan_days, quantity, unit, image_file, created_at, updated_at, deleted_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO product_type(id, gtin, name, lifespan_days, quantity, unit, image_file, created_at, updated_at, deleted_at,
+                         user_fields, lookup_status, lookup_requested_at, nutrition)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 update:
 UPDATE product_type
-SET gtin = ?, name = ?, lifespan_days = ?, quantity = ?, unit = ?, image_file = ?, updated_at = ?
+SET gtin = ?, name = ?, lifespan_days = ?, quantity = ?, unit = ?, image_file = ?, user_fields = ?, updated_at = ?
+WHERE id = ?;
+
+setLifespan:
+UPDATE product_type SET lifespan_days = ?, updated_at = ? WHERE id = ?;
+
+-- Lookup queue: products waiting for the food database, oldest request first.
+selectPendingLookups:
+SELECT * FROM product_type WHERE lookup_status = 'PENDING' AND deleted_at IS NULL ORDER BY lookup_requested_at;
+
+setLookupState:
+UPDATE product_type SET lookup_status = ?, lookup_requested_at = ?, nutrition = ? WHERE id = ?;
+
+-- Products with a barcode that were never looked up (created with lookup turned off, or before nutrition existed).
+queueNeverLookedUp:
+UPDATE product_type SET lookup_status = 'PENDING', lookup_requested_at = :now
+WHERE lookup_status = 'NONE' AND gtin IS NOT NULL AND deleted_at IS NULL;
+
+applyLookup:
+UPDATE product_type
+SET name = ?, quantity = ?, unit = ?, image_file = ?, nutrition = ?, lookup_status = 'FOUND', lookup_requested_at = NULL, updated_at = ?
 WHERE id = ?;
 
 -- Used by backup import to apply a newer remote copy of a row, tombstone included.
 replace:
 UPDATE product_type
 SET gtin = ?, name = ?, lifespan_days = ?, quantity = ?, unit = ?, image_file = ?,
-    created_at = ?, updated_at = ?, deleted_at = ?
+    created_at = ?, updated_at = ?, deleted_at = ?,
+    user_fields = ?, lookup_status = ?, lookup_requested_at = ?, nutrition = ?
 WHERE id = ?;
 
 softDelete:

@@ -55,6 +55,8 @@ fun main() {
                 frame = window
                 window.minimumSize = Dimension(380, 500)
             }
+            // Desktop "opening the app" is launching it: run the lookup queue once.
+            LaunchedEffect(Unit) { deps.lookup.processQueue() }
             App(deps)
         }
     }

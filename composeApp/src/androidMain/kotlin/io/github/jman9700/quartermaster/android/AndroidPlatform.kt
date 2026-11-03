@@ -3,6 +3,8 @@ package io.github.jman9700.quartermaster.android
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -31,6 +33,14 @@ import java.io.File
 class AndroidPlatform(private val appContext: Context) : PlatformServices {
 
     override val imageStore: ImageStore = AndroidImageStore(appContext)
+
+    override suspend fun isOnline(): Boolean {
+        val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return true
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        // VALIDATED means Android actually reached the internet over it (not just "connected to Wi-Fi").
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
 
     override val hasBarcodeScanner: Boolean =
         appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)

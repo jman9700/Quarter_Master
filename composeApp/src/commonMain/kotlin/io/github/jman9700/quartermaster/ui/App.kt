@@ -17,6 +17,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,11 +74,25 @@ fun App(deps: AppDependencies) = QuarterMasterTheme {
     var tab by rememberSaveable { mutableStateOf(Tab.Inventory) }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var editor by remember { mutableStateOf<ProductEditor?>(null) }
+    // Product info page, by product id. The editor opens on top of it.
+    var infoFor by remember { mutableStateOf<String?>(null) }
     var scanTarget by remember { mutableStateOf<ScanTarget?>(null) }
     var typingBarcode by remember { mutableStateOf(false) }
 
     fun message(text: String) {
         scope.launch { snackbar.showSnackbar(text) }
+    }
+
+    // Announce what a lookup-queue run filled in (it runs each time the app is opened).
+    val lastRun by deps.lookup.lastRun.collectAsState()
+    LaunchedEffect(lastRun) {
+        val run = lastRun ?: return@LaunchedEffect
+        deps.lookup.consumeLastRun()
+        val parts = buildList {
+            if (run.filledIn > 0) add("Product info filled in for ${run.filledIn} ${if (run.filledIn == 1) "product" else "products"}")
+            if (run.notFound > 0) add("${run.notFound} not found in the food database")
+        }
+        if (parts.isNotEmpty()) snackbar.showSnackbar(parts.joinToString(". "))
     }
 
     /** A barcode was scanned or typed: add another of a known product, or register a new one. */
@@ -132,7 +147,7 @@ fun App(deps: AppDependencies) = QuarterMasterTheme {
                     types = types,
                     activeItems = active,
                     imageStore = platform.imageStore,
-                    onProductClick = { editor = ProductEditor(it, it.gtin, addAfterSave = false) },
+                    onProductClick = { infoFor = it.id },
                     onNewProduct = { editor = ProductEditor(null, null, addAfterSave = false) },
                     modifier = modifier,
                 )
@@ -143,6 +158,28 @@ fun App(deps: AppDependencies) = QuarterMasterTheme {
                     modifier = modifier,
                 )
                 Tab.Settings -> SettingsScreen(deps = deps, onlineLookup = onlineLookup, today = today, onMessage = ::message, modifier = modifier)
+            }
+        }
+
+        infoFor?.let { id ->
+            val type = types.firstOrNull { it.id == id }
+            if (type == null) {
+                infoFor = null
+            } else {
+                platform.BackHandler(enabled = editor == null && scanTarget == null) { infoFor = null }
+                Surface(Modifier.fillMaxSize()) {
+                    ProductInfoScreen(
+                        deps = deps,
+                        type = type,
+                        onlineLookup = onlineLookup,
+                        today = today,
+                        onClose = { infoFor = null },
+                        onEdit = { editor = ProductEditor(type, type.gtin, addAfterSave = false) },
+                        onAddToInventory = { sheet = Sheet.AddItems(type) },
+                        onItemClick = { sheet = Sheet.ItemDetail(it.id) },
+                        onMessage = ::message,
+                    )
+                }
             }
         }
 
@@ -159,10 +196,13 @@ fun App(deps: AppDependencies) = QuarterMasterTheme {
                     onClose = { editor = null },
                     onSaved = { saved ->
                         editor = null
-                        if (e.addAfterSave) sheet = Sheet.AddItems(saved) else message("Saved ${saved.name}")
+                        // Queued while offline: nothing happens until a connection exists, so this is cheap.
+                        if (saved.isLookupPending) scope.launch { deps.lookup.processQueue() }
+                        if (e.addAfterSave) sheet = Sheet.AddItems(saved) else message("Saved ${saved.displayName}")
                     },
                     onDeleted = { name ->
                         editor = null
+                        infoFor = null
                         message("Deleted $name")
                     },
                     onMessage = ::message,
@@ -211,7 +251,7 @@ fun App(deps: AppDependencies) = QuarterMasterTheme {
                     repo.addItems(s.type.id, count, addedOn, bestBy)
                     sheet = null
                     tab = Tab.Inventory
-                    message(if (count == 1) "Added ${s.type.name}" else "Added $count × ${s.type.name}")
+                    message(if (count == 1) "Added ${s.type.displayName}" else "Added $count × ${s.type.displayName}")
                 }
             },
             onDismiss = { sheet = null },
@@ -226,25 +266,29 @@ fun App(deps: AppDependencies) = QuarterMasterTheme {
                     today = today,
                     imageStore = platform.imageStore,
                     onDatesChanged = { addedOn, bestBy -> scope.launch { repo.updateItemDates(item.id, addedOn, bestBy) } },
+                    onOpenProduct = {
+                        sheet = null
+                        infoFor = item.type.id
+                    },
                     onRemove = { reason ->
                         scope.launch {
                             repo.removeItem(item.id, reason, today)
                             sheet = null
-                            message("${item.type.name}: ${reason.label.lowercase()}")
+                            message("${item.type.displayName}: ${reason.label.lowercase()}")
                         }
                     },
                     onRestore = {
                         scope.launch {
                             repo.restoreItem(item.id)
                             sheet = null
-                            message("${item.type.name} is back in the inventory")
+                            message("${item.type.displayName} is back in the inventory")
                         }
                     },
                     onDelete = {
                         scope.launch {
                             repo.deleteItem(item.id)
                             sheet = null
-                            message("Deleted ${item.type.name}")
+                            message("Deleted ${item.type.displayName}")
                         }
                     },
                     onDismiss = { sheet = null },

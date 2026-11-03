@@ -41,7 +41,17 @@ data class BackupProductType(
     val createdAt: Long,
     val updatedAt: Long,
     val deletedAt: Long? = null,
-)
+    /** Absent in 1.0 backups; see [ownedFields]. */
+    val userFields: String? = null,
+    val lookupStatus: String = "NONE",
+    val lookupRequestedAt: Long? = null,
+    /** Nutrition JSON as stored in the database. */
+    val nutrition: String? = null,
+) {
+    /** 1.0 didn't track this; like the database migration, treat what it saved as the user's. */
+    val ownedFields: String
+        get() = userFields ?: if (imageFile == null) "name,amount" else "name,amount,image"
+}
 
 @Serializable
 data class BackupItem(
@@ -125,11 +135,17 @@ class BackupService(
                 when {
                     sameBarcode != null -> remap[t.id] = sameBarcode.id
                     local == null -> {
-                        types.insert(t.id, t.gtin, t.name, t.lifespanDays.toLong(), t.quantity, t.unit, t.imageFile, t.createdAt, t.updatedAt, t.deletedAt)
+                        types.insert(
+                            t.id, t.gtin, t.name, t.lifespanDays.toLong(), t.quantity, t.unit, t.imageFile, t.createdAt, t.updatedAt, t.deletedAt,
+                            t.ownedFields, t.lookupStatus, t.lookupRequestedAt, t.nutrition,
+                        )
                         summary = summary.copy(productsAdded = summary.productsAdded + 1)
                     }
                     t.updatedAt > local.updated_at -> {
-                        types.replace(t.gtin, t.name, t.lifespanDays.toLong(), t.quantity, t.unit, t.imageFile, t.createdAt, t.updatedAt, t.deletedAt, t.id)
+                        types.replace(
+                            t.gtin, t.name, t.lifespanDays.toLong(), t.quantity, t.unit, t.imageFile, t.createdAt, t.updatedAt, t.deletedAt,
+                            t.ownedFields, t.lookupStatus, t.lookupRequestedAt, t.nutrition, t.id,
+                        )
                         summary = summary.copy(productsUpdated = summary.productsUpdated + 1)
                     }
                 }
@@ -156,6 +172,7 @@ class BackupService(
 
 private fun Product_type.toBackup() = BackupProductType(
     id, gtin, name, lifespan_days.toInt(), quantity, unit, image_file, created_at, updated_at, deleted_at,
+    user_fields, lookup_status, lookup_requested_at, nutrition,
 )
 
 private fun Item.toBackup() = BackupItem(

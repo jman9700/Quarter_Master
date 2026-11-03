@@ -4,6 +4,7 @@ import io.github.jman9700.quartermaster.data.BackupService
 import io.github.jman9700.quartermaster.data.Environment
 import io.github.jman9700.quartermaster.data.InventoryRepository
 import io.github.jman9700.quartermaster.data.OpenFoodFactsClient
+import io.github.jman9700.quartermaster.data.ProductLookupService
 import io.github.jman9700.quartermaster.platform.PlatformServices
 
 /** Everything the shared UI needs, built once per platform at startup. */
@@ -14,4 +15,6 @@ class AppDependencies(
     val platform: PlatformServices,
     val appVersion: String,
     val env: Environment = Environment.System,
-)
+) {
+    val lookup = ProductLookupService(repository, openFoodFacts, platform.imageStore, platform::isOnline)
+}

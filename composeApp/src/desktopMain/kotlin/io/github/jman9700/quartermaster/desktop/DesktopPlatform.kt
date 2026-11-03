@@ -28,6 +28,9 @@ class DesktopPlatform(dataDir: File, private val window: () -> Frame?) : Platfor
 
     override val hasBarcodeScanner: Boolean = false
 
+    // The JVM has no reliable "is there internet" signal; just try, and a failed request queues the lookup.
+    override suspend fun isOnline(): Boolean = true
+
     @Composable
     override fun BarcodeScanner(onScanned: (raw: String, hint: BarcodeHint) -> Unit, onClose: () -> Unit) {
         // Never shown: the shared UI only opens the scanner when hasBarcodeScanner is true.

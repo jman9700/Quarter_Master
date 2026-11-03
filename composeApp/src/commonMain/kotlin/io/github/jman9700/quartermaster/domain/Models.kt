@@ -15,8 +15,17 @@ data class ProductType(
     val imageFile: String?,
     val createdAt: Long,
     val updatedAt: Long,
+    val userFields: Set<ProductField> = emptySet(),
+    val lookupStatus: LookupStatus = LookupStatus.NONE,
+    val nutrition: Nutrition? = null,
 ) {
     val amountText: String get() = "${formatQuantity(quantity)} $unit"
+
+    /** A product saved offline can have no name yet; it shows its barcode until the lookup fills one in. */
+    val displayName: String
+        get() = name.ifBlank { gtin?.let { "Product ${Barcode.display(it)}" } ?: "Unnamed product" }
+
+    val isLookupPending: Boolean get() = lookupStatus == LookupStatus.PENDING
 }
 
 /** User-editable fields of a [ProductType]. */
@@ -27,7 +36,13 @@ data class ProductDraft(
     val quantity: Double,
     val unit: String,
     val imageFile: String?,
+    /** Fields the user set themselves; a later lookup leaves these alone. */
+    val userFields: Set<ProductField> = emptySet(),
+    /** Result of a lookup done in the form, or null to leave the stored lookup state alone. */
+    val lookup: LookupResultState? = null,
 )
+
+data class LookupResultState(val status: LookupStatus, val nutrition: Nutrition? = null)
 
 enum class RemovalReason(val label: String) {
     USED("Used"),

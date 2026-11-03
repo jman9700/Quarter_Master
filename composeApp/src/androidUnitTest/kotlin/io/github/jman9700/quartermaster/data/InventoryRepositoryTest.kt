@@ -115,6 +115,30 @@ class InventoryRepositoryTest {
     }
 
     @Test
+    fun changingTheBarcodeDropsOldNutritionAndRequeues() = runTest {
+        val found = io.github.jman9700.quartermaster.domain.LookupResultState(
+            io.github.jman9700.quartermaster.domain.LookupStatus.FOUND,
+            io.github.jman9700.quartermaster.domain.Nutrition(nutriScore = "a"),
+        )
+        val m = repo.createType(milk.copy(lookup = found))
+        assertEquals("a", m.nutrition?.nutriScore)
+
+        // Editing other fields keeps the nutrition...
+        repo.updateType(m.id, milk.copy(name = "Milk"))
+        assertEquals("a", repo.getType(m.id)?.nutrition?.nutriScore)
+
+        // ...a different barcode is a different product.
+        repo.updateType(m.id, milk.copy(gtin = "04006381333931"))
+        val after = repo.getType(m.id)!!
+        assertNull(after.nutrition)
+        assertEquals(io.github.jman9700.quartermaster.domain.LookupStatus.PENDING, after.lookupStatus)
+
+        // No barcode, nothing to look up.
+        repo.updateType(m.id, milk.copy(gtin = null))
+        assertEquals(io.github.jman9700.quartermaster.domain.LookupStatus.NONE, repo.getType(m.id)!!.lookupStatus)
+    }
+
+    @Test
     fun settings() = runTest {
         assertTrue(repo.onlineLookupEnabled.first())
         repo.setOnlineLookupEnabled(false)

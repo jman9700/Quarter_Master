@@ -11,11 +11,15 @@ import io.github.jman9700.quartermaster.ui.AppDependencies
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
 
 class QuarterMasterApp : Application() {
 
     lateinit var dependencies: AppDependencies
         private set
+
+    /** Outlives activities, so a queue run isn't cancelled by a screen rotation. */
+    val appScope = MainScope()
 
     override fun onCreate() {
         super.onCreate()

@@ -13,6 +13,8 @@ Version 1.0 is an Android app that works entirely on the device, plus a desktop 
 - **Taking items out**: mark them *Used*, *Went bad* or *Discarded*. Everything goes to History and can be put back.
 - **Learned lifespans**: best-by dates and spoiled items become lifespan samples. Each product shows how long it really lasts and how often it went bad early, and you can apply the average as its default.
 - **Optional online lookup**: scanning something new can prefill the name, size and photo from [OpenFoodFacts](https://openfoodfacts.org). Only the barcode is sent, and this can be turned off in Settings.
+- **Product info and nutrition**: each product has an info page with its Nutri-Score, NOVA group, serving size, a nutrition table (per serving and per 100 g), allergens and ingredients, plus a link to OpenFoodFacts for everything else. Open it from the Products tab, or from any inventory item.
+- **Works without signal**: with no or weak connection (say, a store basement), a lookup goes into a queue and the app tells you. Products can be saved without a name in the meantime; they show as pending. The queue runs once each time the app is opened (no polling) and fills in whatever you didn't set yourself. Anything you typed or chose is never overwritten. If the details arrive but the photo doesn't, the product stays queued for its photo.
 - **Backup**: export everything (photos included) to a JSON file, and import it on any device. Imports merge, with the newest version of each entry winning.
 
 ## Building
@@ -80,7 +82,7 @@ composeApp/src/
 
 | Table          | What it holds                                                         | Alpha equivalent |
 |----------------|-----------------------------------------------------------------------|------------------|
-| `product_type` | A kind of product: barcode (GTIN-14), name, lifespan, amount, photo   | `lookup.txt`     |
+| `product_type` | A kind of product: barcode (GTIN-14), name, lifespan, amount, photo, nutrition, lookup status, fields the user set | `lookup.txt` |
 | `item`         | One physical item: added date, best-by, removed date and reason        | `log.txt`        |
 | `setting`      | Device-local settings (not backed up)                                  | none             |
 

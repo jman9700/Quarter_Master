@@ -98,6 +98,45 @@ class BackupServiceTest {
     }
 
     @Test
+    fun nutritionAndUserChoicesTravelWithTheBackup() = runTest {
+        val phone = Device("phone")
+        val draft = milk.copy(
+            userFields = setOf(io.github.jman9700.quartermaster.domain.ProductField.NAME),
+            lookup = io.github.jman9700.quartermaster.domain.LookupResultState(
+                io.github.jman9700.quartermaster.domain.LookupStatus.FOUND,
+                io.github.jman9700.quartermaster.domain.Nutrition(nutriScore = "b", allergens = listOf("Milk")),
+            ),
+        )
+        phone.repo.createType(draft)
+        val tablet = Device("tablet")
+        tablet.backup.import(phone.backup.export())
+        val t = tablet.repo.productTypes.first().single()
+        assertEquals("b", t.nutrition?.nutriScore)
+        assertEquals(listOf("Milk"), t.nutrition?.allergens)
+        assertEquals(setOf(io.github.jman9700.quartermaster.domain.ProductField.NAME), t.userFields)
+        assertEquals(io.github.jman9700.quartermaster.domain.LookupStatus.FOUND, t.lookupStatus)
+    }
+
+    @Test
+    fun aVersion10BackupStillImports() = runTest {
+        val d = Device("d")
+        d.backup.import(
+            """{"format":"quarter-master-backup","version":1,"appVersion":"1.0.0","deviceId":"x","exportedAt":0,
+               "productTypes":[{"id":"pb","gtin":"00036000291452","name":"PB","lifespanDays":30,"quantity":16.0,"unit":"Oz",
+                 "createdAt":1,"updatedAt":1}],
+               "items":[]}""",
+        )
+        val t = d.repo.productTypes.first().single()
+        assertEquals("PB", t.name)
+        // Like the database migration: what 1.0 saved is treated as the user's own.
+        assertEquals(
+            setOf(io.github.jman9700.quartermaster.domain.ProductField.NAME, io.github.jman9700.quartermaster.domain.ProductField.AMOUNT),
+            t.userFields,
+        )
+        assertEquals(io.github.jman9700.quartermaster.domain.LookupStatus.NONE, t.lookupStatus)
+    }
+
+    @Test
     fun rejectsOtherFiles() = runTest {
         val d = Device("d")
         assertFailsWith<BackupFormatException> { d.backup.import("not json") }

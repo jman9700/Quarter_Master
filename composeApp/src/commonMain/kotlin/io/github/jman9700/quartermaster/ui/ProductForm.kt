@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
@@ -49,7 +50,11 @@ import androidx.compose.ui.unit.dp
 import io.github.jman9700.quartermaster.domain.Barcode
 import io.github.jman9700.quartermaster.domain.BarcodeResult
 import io.github.jman9700.quartermaster.domain.DuplicateBarcodeException
+import io.github.jman9700.quartermaster.data.LookupResult
 import io.github.jman9700.quartermaster.domain.LifespanStats
+import io.github.jman9700.quartermaster.domain.LookupResultState
+import io.github.jman9700.quartermaster.domain.LookupStatus
+import io.github.jman9700.quartermaster.domain.ProductField
 import io.github.jman9700.quartermaster.domain.ProductDraft
 import io.github.jman9700.quartermaster.domain.ProductType
 import io.github.jman9700.quartermaster.domain.UNIT_OPTIONS
@@ -59,7 +64,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlin.math.roundToInt
 
-private enum class LookupState { Idle, Loading, Found, NotFound }
+private enum class LookupState { Idle, Loading, Found, NotFound, Queued }
 
 /** Create or edit a product type. Formerly the alpha's "Add Item Type" dialog. */
 @Composable
@@ -85,7 +90,13 @@ fun ProductForm(
     var quantity by remember { mutableStateOf(existing?.quantity?.let(::formatQuantity) ?: "1") }
     var unit by remember { mutableStateOf(existing?.unit ?: UNIT_OPTIONS.first()) }
     var imageFile by remember { mutableStateOf(existing?.imageFile) }
-    var lookup by remember { mutableStateOf(LookupState.Idle) }
+    var nutrition by remember { mutableStateOf(existing?.nutrition) }
+    // Fields the user has set themselves. A lookup, now or later from the queue, never overwrites them.
+    var userFields by remember { mutableStateOf(existing?.userFields ?: emptySet()) }
+    var lookup by remember { mutableStateOf(if (existing?.isLookupPending == true) LookupState.Queued else LookupState.Idle) }
+    // Whether a lookup ran in this form, so its result (or its place in the queue) gets saved.
+    var lookupRan by remember { mutableStateOf(false) }
+    var showQueuedDialog by remember { mutableStateOf(false) }
     var errors by remember { mutableStateOf(emptyMap<String, String>()) }
     var saving by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -95,25 +106,33 @@ fun ProductForm(
     }.collectAsState(emptyList())
     val lifespanStats = remember(stats) { LifespanStats.from(stats) }
 
+    fun own(field: ProductField) {
+        userFields = userFields + field
+    }
+
     fun lookUp(gtin14: String) {
         if (lookup == LookupState.Loading) return
         lookup = LookupState.Loading
+        lookupRan = true
         scope.launch {
-            val suggestion = deps.openFoodFacts.lookup(gtin14)
-            if (suggestion == null) {
-                lookup = LookupState.NotFound
-                return@launch
-            }
-            // Only fill blanks: never overwrite what the user already typed.
-            if (name.isBlank()) suggestion.name?.let { name = it }
-            if (suggestion.quantity != null && suggestion.unit != null && unit == UNIT_OPTIONS.first() && quantity == "1") {
-                quantity = formatQuantity(suggestion.quantity)
-                unit = suggestion.unit
-            }
-            lookup = LookupState.Found
-            if (imageFile == null && suggestion.imageUrl != null) {
-                deps.openFoodFacts.downloadImage(suggestion.imageUrl)?.let { bytes ->
-                    runCatching { imageStore.save(bytes) }.getOrNull()?.let { imageFile = it }
+            when (val result = deps.lookup.lookup(gtin14)) {
+                is LookupResult.Found -> {
+                    val s = result.suggestion
+                    if (ProductField.NAME !in userFields) s.name?.let { name = it; errors = errors - "name" }
+                    if (ProductField.AMOUNT !in userFields && s.quantity != null && s.unit != null) {
+                        quantity = formatQuantity(s.quantity)
+                        unit = s.unit
+                    }
+                    nutrition = s.nutrition ?: nutrition
+                    lookup = LookupState.Found
+                    if (ProductField.IMAGE !in userFields && imageFile == null && s.imageUrl != null) {
+                        deps.lookup.downloadImage(s.imageUrl)?.let { if (ProductField.IMAGE !in userFields) imageFile = it }
+                    }
+                }
+                LookupResult.NotFound -> lookup = LookupState.NotFound
+                LookupResult.Unavailable -> {
+                    lookup = LookupState.Queued
+                    showQueuedDialog = true
                 }
             }
         }
@@ -126,7 +145,7 @@ fun ProductForm(
     val picker = deps.platform.rememberImagePicker { bytes ->
         scope.launch {
             runCatching { imageStore.save(bytes) }
-                .onSuccess { imageFile = it }
+                .onSuccess { imageFile = it; own(ProductField.IMAGE) }
                 .onFailure { onMessage("Couldn't use that image") }
         }
     }
@@ -139,7 +158,9 @@ fun ProductForm(
                 is BarcodeResult.Invalid -> { problems["barcode"] = r.reason; null }
             }
         }
-        if (name.isBlank()) problems["name"] = "Name is required"
+        val waitingForLookup = gtin != null && (lookup == LookupState.Queued || lookup == LookupState.Loading)
+        // Offline in the store: a scanned product may be saved nameless; the queued lookup names it later.
+        if (name.isBlank() && !waitingForLookup) problems["name"] = "Name is required"
         val days = lifespan.trim().toIntOrNull()
         if (days == null || days < 0) problems["lifespan"] = "Lifespan must be a whole number of days"
         val qty = quantity.trim().replace(',', '.').toDoubleOrNull()
@@ -147,7 +168,14 @@ fun ProductForm(
         errors = problems
         if (problems.isNotEmpty() || days == null || qty == null) return
 
-        val draft = ProductDraft(gtin, name.trim(), days, qty, unit, imageFile)
+        val lookupState = when {
+            gtin == null -> null
+            lookup == LookupState.Found -> LookupResultState(LookupStatus.FOUND, nutrition)
+            lookup == LookupState.NotFound -> LookupResultState(LookupStatus.NOT_FOUND, nutrition)
+            waitingForLookup && (lookupRan || existing == null) -> LookupResultState(LookupStatus.PENDING, nutrition)
+            else -> null
+        }
+        val draft = ProductDraft(gtin, name.trim(), days, qty, unit, imageFile, userFields, lookupState)
         saving = true
         scope.launch {
             try {
@@ -155,16 +183,18 @@ fun ProductForm(
                     repo.createType(draft)
                 } else {
                     repo.updateType(existing.id, draft)
-                    existing.copy(gtin = gtin, name = draft.name, lifespanDays = days, quantity = qty, unit = unit, imageFile = imageFile)
+                    repo.getType(existing.id) ?: existing
                 }
                 onSaved(saved)
             } catch (e: DuplicateBarcodeException) {
-                errors = mapOf("barcode" to "Already used by \"${e.existing.name}\"")
+                errors = mapOf("barcode" to "Already used by \"${e.existing.displayName}\"")
             } finally {
                 saving = false
             }
         }
     }
+
+    val pendingHint = "Pending: fills in from the food database when you're back online"
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -189,6 +219,7 @@ fun ProductForm(
                             LookupState.Loading -> "Looking it up on OpenFoodFacts…"
                             LookupState.Found -> "Filled in from OpenFoodFacts. Check it's right."
                             LookupState.NotFound -> "Not found online. Fill it in by hand."
+                            LookupState.Queued -> "No connection: lookup queued for when you're back online"
                             LookupState.Idle -> "Leave empty for things without one, like fresh fruit"
                         },
                     )
@@ -221,10 +252,11 @@ fun ProductForm(
             )
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it; errors = errors - "name" },
+                onValueChange = { name = it; errors = errors - "name"; own(ProductField.NAME) },
                 label = { Text("Name") },
                 isError = "name" in errors,
-                supportingText = errors["name"]?.let { { Text(it) } },
+                supportingText = (errors["name"] ?: pendingHint.takeIf { lookup == LookupState.Queued && ProductField.NAME !in userFields })
+                    ?.let { { Text(it) } },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -244,15 +276,16 @@ fun ProductForm(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = quantity,
-                    onValueChange = { quantity = it; errors = errors - "quantity" },
+                    onValueChange = { quantity = it; errors = errors - "quantity"; own(ProductField.AMOUNT) },
                     label = { Text("Quantity") },
                     isError = "quantity" in errors,
-                    supportingText = errors["quantity"]?.let { { Text(it) } },
+                    supportingText = (errors["quantity"] ?: "Pending".takeIf { lookup == LookupState.Queued && ProductField.AMOUNT !in userFields })
+                        ?.let { { Text(it) } },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
-                UnitDropdown(unit, { unit = it }, Modifier.weight(1f))
+                UnitDropdown(unit, { unit = it; own(ProductField.AMOUNT) }, Modifier.weight(1f))
             }
             Text("Image", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -260,8 +293,15 @@ fun ProductForm(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (picker.canTakePhoto) OutlinedButton(onClick = picker::takePhoto) { Text("Take photo") }
                     OutlinedButton(onClick = picker::pickFromGallery) { Text("Choose image") }
-                    if (imageFile != null) TextButton(onClick = { imageFile = null }) { Text("Remove image") }
+                    if (imageFile != null) TextButton(onClick = { imageFile = null; own(ProductField.IMAGE) }) { Text("Remove image") }
                 }
+            }
+            if (lookup == LookupState.Queued && imageFile == null && ProductField.IMAGE !in userFields) {
+                Text(
+                    "Photo pending: comes from the food database when you're back online",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         Button(
@@ -271,11 +311,27 @@ fun ProductForm(
         ) { Text(if (existing == null) "Save product" else "Save changes") }
     }
 
+    if (showQueuedDialog) {
+        AlertDialog(
+            onDismissRequest = { showQueuedDialog = false },
+            icon = { Icon(Icons.Default.CloudOff, contentDescription = null) },
+            title = { Text("No internet connection") },
+            text = {
+                Text(
+                    "Couldn't reach the food database, so looking up this product has been added to a queue. " +
+                        "It runs by itself the next time you open Quarter Master with a connection.\n\n" +
+                        "Fill in what you know now. Anything you enter yourself is kept and won't be replaced by the lookup.",
+                )
+            },
+            confirmButton = { TextButton(onClick = { showQueuedDialog = false }) { Text("OK") } },
+        )
+    }
+
     if (confirmDelete && existing != null) {
         val count = stats.size
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete ${existing.name}?") },
+            title = { Text("Delete ${existing.displayName}?") },
             text = {
                 Text(if (count == 0) "This product has no items." else "This also deletes its $count ${if (count == 1) "item" else "items"}, history included.")
             },
@@ -284,7 +340,7 @@ fun ProductForm(
                     confirmDelete = false
                     scope.launch {
                         repo.deleteType(existing.id)
-                        onDeleted(existing.name)
+                        onDeleted(existing.displayName)
                     }
                 }) { Text("Delete") }
             },
@@ -294,7 +350,7 @@ fun ProductForm(
 }
 
 @Composable
-private fun ObservedLifespanCard(stats: LifespanStats, currentDays: Int?, onApply: (Int) -> Unit) {
+internal fun ObservedLifespanCard(stats: LifespanStats, currentDays: Int?, onApply: (Int) -> Unit) {
     val avg = stats.averageDays ?: return
     val suggested = stats.suggestedLifespanDays ?: return
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh), modifier = Modifier.fillMaxWidth()) {

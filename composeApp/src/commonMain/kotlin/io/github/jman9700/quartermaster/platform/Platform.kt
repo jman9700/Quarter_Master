@@ -11,6 +11,12 @@ import io.github.jman9700.quartermaster.domain.BarcodeHint
 interface PlatformServices {
     val imageStore: ImageStore
 
+    /**
+     * Whether there's a network that can actually reach the internet right now. A cheap check before
+     * trying the food database; a weak connection can still pass it and is caught by request timeouts.
+     */
+    suspend fun isOnline(): Boolean
+
     /** Whether a camera scanner is available; when it isn't, the app offers typed entry only. */
     val hasBarcodeScanner: Boolean
 

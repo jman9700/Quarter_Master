@@ -60,7 +60,7 @@ private fun SheetHeader(type: ProductType, imageStore: ImageStore, subtitle: Str
     Row(verticalAlignment = Alignment.CenterVertically) {
         ProductImage(imageStore, type.imageFile, 56.dp)
         Column(Modifier.padding(start = 12.dp)) {
-            Text(type.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(type.displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         }
     }
@@ -107,7 +107,7 @@ fun ProductPickerSheet(
                     ) {
                         ProductImage(imageStore, type.imageFile, 40.dp)
                         Column(Modifier.padding(start = 12.dp)) {
-                            Text(type.name, style = MaterialTheme.typography.titleSmall)
+                            Text(type.displayName, style = MaterialTheme.typography.titleSmall)
                             Text(
                                 type.amountText + (type.gtin?.let { " · ${Barcode.display(it)}" } ?: ""),
                                 style = MaterialTheme.typography.bodySmall,
@@ -166,6 +166,7 @@ fun ItemDetailSheet(
     today: LocalDate,
     imageStore: ImageStore,
     onDatesChanged: (addedOn: LocalDate, bestBy: LocalDate?) -> Unit,
+    onOpenProduct: () -> Unit,
     onRemove: (RemovalReason) -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit,
@@ -181,6 +182,9 @@ fun ItemDetailSheet(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SheetHeader(item.type, imageStore, item.type.amountText)
+            OutlinedButton(onClick = onOpenProduct, modifier = Modifier.fillMaxWidth()) {
+                Text(if (item.type.isLookupPending) "Product info (pending)" else "Product info & nutrition")
+            }
             if (inInventory) {
                 HealthBar(Freshness.fraction(item.addedOn, expires, today), Modifier.padding(top = 4.dp))
                 Text("Expires ${expires.pretty()}: ${Freshness.describe(expires, today).lowercase()}", style = MaterialTheme.typography.bodyMedium)
