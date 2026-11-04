@@ -1,7 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val appVersion = "1.1.0"
+val appVersion = "2.0.0"
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -31,6 +31,11 @@ kotlin {
             languageSettings.optIn("kotlin.uuid.ExperimentalUuidApi")
             languageSettings.optIn("kotlin.io.encoding.ExperimentalEncodingApi")
             languageSettings.optIn("androidx.compose.material3.ExperimentalMaterial3Api")
+        }
+
+        commonMain {
+            // The sync protocol, shared with the server.
+            kotlin.srcDir("../Shared/src/commonMain/kotlin")
         }
 
         commonMain.dependencies {
@@ -98,7 +103,7 @@ android {
         applicationId = "io.github.jman9700.quartermaster"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 2
+        versionCode = 3
         versionName = appVersion
     }
 

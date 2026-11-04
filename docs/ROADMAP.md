@@ -8,7 +8,7 @@ Fully on-device, with manual entry plus camera barcode scanning. See the README 
 
 A `jvm("desktop")` Compose Desktop target in the same project. It's built and tested on Windows. Linux uses the same code but hasn't been tried on a Linux machine yet. Webcam scanning is still open. The original plan:
 
-1. Add a `jvm("desktop")` target in `composeApp/build.gradle.kts` and a `desktopMain` source set.
+1. Add a `jvm("desktop")` target in `Client/build.gradle.kts` and a `desktopMain` source set.
 2. Implement `PlatformServices` for desktop:
    - **Barcode input**: USB barcode scanners act as keyboards, so the typed-entry dialog already works with them (set `hasBarcodeScanner = false` for that path). Webcam scanning is optional, for example with ZXing plus a webcam library.
    - **Images**: a desktop `ImageStore` writing to the user's app-data folder (`%APPDATA%\QuarterMaster` / `~/.local/share/quartermaster`), using `javax.imageio` to downscale.

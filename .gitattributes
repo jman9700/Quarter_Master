@@ -1,0 +1,8 @@
+# Scripts that run on Linux (Docker builds, CI) must keep LF endings, even in a Windows checkout.
+gradlew        text eol=lf
+*.sh           text eol=lf
+Dockerfile     text eol=lf
+# Windows scripts keep CRLF.
+*.bat          text eol=crlf
+*.cmd          text eol=crlf
+*.ps1          text eol=crlf
